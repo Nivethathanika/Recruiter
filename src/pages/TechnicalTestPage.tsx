@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Clock, CheckSquare, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Clock, CheckSquare, ArrowRight, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useRecruitment } from '@/context/RecruitmentContext';
-import { subjects, Subject } from '@/data/questions';
+import { getDepartmentQuestionBank } from '@/data/questions';
 import { toast } from 'sonner';
 
 type Phase = 'select' | 'test' | 'done';
@@ -18,12 +18,19 @@ export default function TechnicalTestPage() {
   const [currentSubjectIdx, setCurrentSubjectIdx] = useState(0);
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, number[]>>({});
-  const [timeLeft, setTimeLeft] = useState(600); // 10 min per subject
+  const [timeLeft, setTimeLeft] = useState(600);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
 
-  const activeSubjects = selectedSubjects.map(id => subjects.find(s => s.id === id)!);
+  const departmentBank = currentCandidate ? getDepartmentQuestionBank(currentCandidate.department) : null;
+  const availableSubjects = departmentBank?.subjects ?? [];
+  const activeSubjects = selectedSubjects.map(id => availableSubjects.find(s => s.id === id)!).filter(Boolean);
   const currentSubject = activeSubjects[currentSubjectIdx];
   const currentQuestion = currentSubject?.questions[currentQuestionIdx];
+
+  const totalQuestions = activeSubjects.reduce((sum, subject) => sum + subject.questions.length, 0);
+  const currentQuestionNumber = activeSubjects
+    .slice(0, currentSubjectIdx)
+    .reduce((sum, subject) => sum + subject.questions.length, 0) + currentQuestionIdx + 1;
 
   const handleTimeUp = useCallback(() => {
     // Auto-submit current subject
@@ -49,6 +56,18 @@ export default function TechnicalTestPage() {
     );
   }
 
+  if (!departmentBank) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <div className="max-w-md text-center rounded-xl border border-border bg-card p-8 shadow-sm">
+          <h2 className="font-display text-2xl font-bold text-foreground mb-4">Department data unavailable</h2>
+          <p className="text-muted-foreground mb-6">We could not load assessment subjects for your selected department. Please return to the application and select a valid department.</p>
+          <Button onClick={() => navigate('/apply')} className="bg-primary text-primary-foreground">Back to Application</Button>
+        </div>
+      </div>
+    );
+  }
+
   const toggleSubject = (id: string) => {
     setSelectedSubjects(prev =>
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
@@ -60,11 +79,18 @@ export default function TechnicalTestPage() {
       toast.error('Please select at least 5 subjects');
       return;
     }
+
     const initial: Record<string, number[]> = {};
-    selectedSubjects.forEach(s => { initial[s] = Array(10).fill(-1); });
+    selectedSubjects.forEach(subjectId => {
+      const subject = availableSubjects.find(s => s.id === subjectId);
+      if (subject) {
+        initial[subjectId] = Array(subject.questions.length).fill(-1);
+      }
+    });
+
     setAnswers(initial);
     setPhase('test');
-    setTimeLeft(600);
+    setTimeLeft(departmentBank.timer);
   };
 
   const selectAnswer = (optionIdx: number) => {
@@ -81,16 +107,27 @@ export default function TechnicalTestPage() {
       setCurrentSubjectIdx(i => i + 1);
       setCurrentQuestionIdx(0);
       setSelectedOption(null);
-      setTimeLeft(600);
+      setTimeLeft(departmentBank.timer);
     } else {
       finishTest();
     }
   };
 
+  const previousQuestion = () => {
+    if (!currentSubject) return;
+    if (currentQuestionIdx > 0) {
+      const previousIndex = currentQuestionIdx - 1;
+      setCurrentQuestionIdx(previousIndex);
+      setSelectedOption(answers[currentSubject.id]?.[previousIndex] ?? null);
+    }
+  };
+
   const nextQuestion = () => {
-    if (currentQuestionIdx < 9) {
-      setCurrentQuestionIdx(i => i + 1);
-      setSelectedOption(answers[currentSubject.id]?.[currentQuestionIdx + 1] ?? null);
+    if (!currentSubject) return;
+    if (currentQuestionIdx < currentSubject.questions.length - 1) {
+      const nextIndex = currentQuestionIdx + 1;
+      setCurrentQuestionIdx(nextIndex);
+      setSelectedOption(answers[currentSubject.id]?.[nextIndex] ?? null);
     } else {
       moveToNextSubject();
     }
@@ -99,14 +136,16 @@ export default function TechnicalTestPage() {
   const finishTest = () => {
     let total = 0, correct = 0;
     for (const subId of selectedSubjects) {
-      const sub = subjects.find(s => s.id === subId)!;
+      const sub = availableSubjects.find(s => s.id === subId);
       const subAnswers = answers[subId] || [];
+      if (!sub) continue;
       subAnswers.forEach((ans, qi) => {
         total++;
-        if (ans === sub.questions[qi].correct) correct++;
+        if (ans === sub.questions[qi]?.correct) correct++;
       });
     }
-    const score = Math.round((correct / total) * 100);
+
+    const score = total > 0 ? Math.round((correct / total) * 100) : 0;
     updateCandidate({ technicalScore: score, technicalSubjects: selectedSubjects, technicalAnswers: answers, completedSteps: 3 });
     setPhase('done');
     toast.success(`Technical test completed! Score: ${score}/100`);
@@ -126,29 +165,29 @@ export default function TechnicalTestPage() {
         <section className="py-16">
           <div className="container mx-auto max-w-4xl px-4">
             <div className="mb-6 flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">Selected: <span className="font-semibold text-foreground">{selectedSubjects.length}/8</span> (min 5)</p>
-              <p className="text-sm text-muted-foreground">10 MCQs per subject • 10 minutes per subject</p>
+              <p className="text-sm text-muted-foreground">Selected: <span className="font-semibold text-foreground">{selectedSubjects.length}/{availableSubjects.length}</span> (min 5)</p>
+              <p className="text-sm text-muted-foreground">{currentCandidate.department} • {departmentBank.level} • 10 MCQs per subject • {Math.floor(departmentBank.timer / 60)} minutes per subject</p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              {subjects.map(s => (
+              {availableSubjects.map(subject => (
                 <motion.button
-                  key={s.id}
+                  key={subject.id}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => toggleSubject(s.id)}
+                  onClick={() => toggleSubject(subject.id)}
                   className={`rounded-xl border-2 p-6 text-left transition-all ${
-                    selectedSubjects.includes(s.id)
+                    selectedSubjects.includes(subject.id)
                       ? 'border-primary bg-primary/5 shadow-md'
                       : 'border-border bg-card hover:border-primary/30'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-3xl">{s.icon}</span>
-                    <div>
-                      <h3 className="font-display text-lg font-semibold text-card-foreground">{s.name}</h3>
-                      <p className="text-sm text-muted-foreground">10 Questions</p>
+                    <span className="text-3xl">{subject.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-display text-lg font-semibold text-card-foreground">{subject.name}</h3>
+                      <p className="text-sm text-muted-foreground">{subject.questions.length} Questions • {subject.difficulty}</p>
                     </div>
-                    {selectedSubjects.includes(s.id) && <CheckSquare className="ml-auto h-5 w-5 text-primary" />}
+                    {selectedSubjects.includes(subject.id) && <CheckSquare className="ml-auto h-5 w-5 text-primary" />}
                   </div>
                 </motion.button>
               ))}
@@ -209,10 +248,10 @@ export default function TechnicalTestPage() {
       <div className="container mx-auto max-w-3xl px-4 py-8">
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-muted-foreground">Question {currentQuestionIdx + 1} of 10</span>
-            <span className="text-sm text-muted-foreground">{Math.round(((currentSubjectIdx * 10 + currentQuestionIdx + 1) / (activeSubjects.length * 10)) * 100)}% complete</span>
+            <span className="text-sm text-muted-foreground">Question {currentQuestionIdx + 1} of {currentSubject?.questions.length ?? 0}</span>
+            <span className="text-sm text-muted-foreground">{Math.round((currentQuestionNumber / totalQuestions) * 100)}% complete</span>
           </div>
-          <Progress value={((currentSubjectIdx * 10 + currentQuestionIdx + 1) / (activeSubjects.length * 10)) * 100} className="h-2" />
+          <Progress value={(totalQuestions > 0 ? (currentQuestionNumber / totalQuestions) * 100 : 0)} className="h-2" />
         </div>
 
         <motion.div key={`${currentSubject.id}-${currentQuestionIdx}`} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="rounded-xl border border-border bg-card p-8 shadow-sm">
@@ -237,17 +276,28 @@ export default function TechnicalTestPage() {
               </button>
             ))}
           </div>
-          <div className="mt-8 flex justify-end">
+          <div className="mt-8 flex justify-between">
+            <Button
+              onClick={previousQuestion}
+              disabled={currentQuestionIdx === 0}
+              variant="secondary"
+              className="px-6"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Previous
+            </Button>
             <Button onClick={nextQuestion} className="bg-primary text-primary-foreground hover:bg-navy-light px-8">
-              {currentQuestionIdx === 9 ? (currentSubjectIdx === activeSubjects.length - 1 ? 'Finish Test' : 'Next Subject') : 'Next Question'}
+              {currentQuestionIdx === (currentSubject?.questions.length ?? 1) - 1
+                ? (currentSubjectIdx === activeSubjects.length - 1 ? 'Finish Test' : 'Next Subject')
+                : 'Next Question'}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
         </motion.div>
 
         {/* Question indicators */}
-        <div className="mt-6 flex justify-center gap-2">
-          {Array.from({ length: 10 }, (_, i) => (
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {Array.from({ length: currentSubject?.questions.length ?? 0 }, (_, i) => (
             <div
               key={i}
               className={`h-3 w-3 rounded-full ${

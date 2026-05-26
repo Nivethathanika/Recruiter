@@ -24,7 +24,7 @@ export default function CareersPage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.1 }}
                 viewport={{ once: true }}
-                className="rounded-xl border border-border bg-card p-6 shadow-sm hover:shadow-lg transition-all group"
+                className="flex h-full flex-col rounded-xl border border-border bg-card p-6 shadow-sm transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-xl group"
               >
                 <div className="mb-4 inline-flex rounded-lg bg-primary/10 px-3 py-1">
                   <span className="text-xs font-semibold text-primary uppercase tracking-wide">Open Position</span>
@@ -52,7 +52,7 @@ export default function CareersPage() {
                     <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">+{job.skills.length - 4}</span>
                   )}
                 </div>
-                <Button asChild className="w-full bg-primary text-primary-foreground hover:bg-navy-light">
+                <Button asChild className="mt-auto w-full rounded-lg bg-primary text-primary-foreground transition-transform duration-300 ease-out hover:-translate-y-0.5 hover:bg-navy-light">
                   <Link to="/apply">Apply Now <ArrowRight className="ml-2 h-4 w-4" /></Link>
                 </Button>
               </motion.div>
